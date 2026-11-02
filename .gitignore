@@ -1,0 +1,6 @@
+__pycache__/
+core/__pycache__/
+reports/__pycache__/
+venv/
+reports_output/*.pdf
+.DS_Store
