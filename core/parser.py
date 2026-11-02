@@ -1,68 +1,41 @@
+import os
 import mailparser
-import hashlib
-import re
-import tldextract
+import extract_msg
 
 class ApexParser:
-    def __init__(self, file_path):
-        self.file_path = file_path
-        self.parsed_mail = None
-        self.extraction_results = {}
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.ext = os.path.splitext(filepath)[1].lower()
 
-    def parse_email(self):
-        try:
-            # Parse the email file using mail-parser
-            self.parsed_mail = mailparser.parse_from_file(self.file_path)
-            
-            # Extract basic metadata
-            self.extraction_results["subject"] = self.parsed_mail.subject or "No Subject"
-            self.extraction_results["from_address"] = self.parsed_mail.from_ or "Unknown Sender"
-            self.extraction_results["to_address"] = self.parsed_mail.to or "Unknown Recipient"
-            self.extraction_results["date"] = str(self.parsed_mail.date) or "Unknown Date"
-            
-            # Extract URLs from body
-            body_content = self.parsed_mail.body or ""
-            raw_urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', body_content)
-            
-            # Defang URLs for safe viewing and reporting
-            defanged_urls = []
-            for url in raw_urls:
-                defanged = url.replace("http", "hxxp").replace(".", "[.]")
-                defanged_urls.append({"original": url, "defanged": defanged})
-            
-            self.extraction_results["urls"] = defanged_urls
+    def parse(self):
+        """Unified parser handling both .eml and .msg files."""
+        if self.ext == '.msg':
+            return self._parse_msg()
+        else:
+            return self._parse_eml()
 
-            # Extract Attachments and compute hashes
-            attachments_info = []
-            for att in self.parsed_mail.attachments:
-                filename = att.get("filename", "unknown_file")
-                payload = att.get("payload", "")
-                
-                # If payload is base64 encoded, decode to bytes for hashing
-                import base64
-                try:
-                    file_bytes = base64.b64decode(payload)
-                except Exception:
-                    file_bytes = payload.encode('utf-8', errors='ignore')
+    def _parse_eml(self):
+        mail = mailparser.parse_from_file(self.filepath)
+        return {
+            "subject": mail.subject,
+            "from": mail.from_[0][1] if mail.from_ else "",
+            "to": mail.to,
+            "date": mail.date,
+            "body": mail.body,
+            "headers": mail.mail_header,
+            "attachments": [att['filename'] for att in mail.attachments] if mail.attachments else []
+        }
 
-                sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-                md5_hash = hashlib.md5(file_bytes).hexdigest()
-
-                # Check for risky extensions
-                is_executable = filename.lower().endswith(('.exe', '.scr', '.js', '.bat', '.cmd', '.pif'))
-                has_macros = filename.lower().endswith(('.xlsm', '.docm', '.pptm'))
-
-                attachments_info.append({
-                    "filename": filename,
-                    "sha256": sha256_hash,
-                    "md5": md5_hash,
-                    "is_executable": is_executable,
-                    "has_macros": has_macros
-                })
-
-            self.extraction_results["attachments"] = attachments_info
-            return self.extraction_results
-
-        except Exception as e:
-            print(f"\033[91m[!] Error parsing email structure: {str(e)}\033[0m")
-            return None
+    def _parse_msg(self):
+        msg = extract_msg.Message(self.filepath)
+        parsed_data = {
+            "subject": msg.subject,
+            "from": msg.sender,
+            "to": msg.to,
+            "date": msg.date,
+            "body": msg.body,
+            "headers": str(msg.header) if msg.header else "",
+            "attachments": [att.filename for att in msg.attachments] if msg.attachments else []
+        }
+        msg.close()
+        return parsed_data
