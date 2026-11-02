@@ -1,34 +1,43 @@
-class ApexScorer:
+class ApexRiskScorer:
     def __init__(self, parsed_data):
         self.data = parsed_data
-        self.score = 0
 
-    def calculate_score(self):
-        # 1. URL Volume and Indicators
-        urls = self.data.get("urls", [])
+    def evaluate(self):
+        """Evaluates risk score based on attachments, defanged URLs, and authentication failures."""
+        score = 10
+        
+        # Check attachments for executables
+        attachments = self.data.get('attachments', [])
+        for att in attachments:
+            if att.get('is_executable', False):
+                score += 40
+        
+        # Check URLs
+        urls = self.data.get('urls', [])
         if len(urls) > 0:
-            self.score += min(len(urls) * 5, 25)
+            score += len(urls) * 5
 
-        # 2. Attachment Risk Analysis
-        for att in self.data.get("attachments", []):
-            if att.get("is_executable", False):
-                self.score += 45
-            if att.get("has_macros", False):
-                self.score += 30
-            # Base score for any attachment in a suspected phish
-            self.score += 10
+        # Check Authentication Failures (SPF / DKIM / DMARC)
+        auth = self.data.get('authentication', {})
+        if auth.get('spf') == 'FAIL':
+            score += 20
+        if auth.get('dkim') == 'FAIL':
+            score += 20
+        if auth.get('dmarc') == 'FAIL':
+            score += 30
 
-        # Cap the score between 0 and 100
-        self.score = max(0, min(self.score, 100))
-        return self.score
-
-    def get_severity_tier(self):
-        score = self.score
-        if score >= 75:
-            return "CRITICAL", "High probability of malicious intent. Immediate isolation & containment recommended."
-        elif score >= 50:
-            return "HIGH", "Significant risk indicators detected. Treat with extreme caution."
-        elif score >= 25:
-            return "MEDIUM", "Anomalies found, requires manual analyst review."
+        # Cap score at 100
+        score = min(score, 100)
+        
+        # Determine severity tier
+        if score < 40:
+            severity = "LOW"
+        elif score < 75:
+            severity = "MEDIUM"
         else:
-            return "LOW", "Minimal risk indicators detected."
+            severity = "HIGH"
+
+        return {
+            "risk_score": score,
+            "severity": severity
+        }

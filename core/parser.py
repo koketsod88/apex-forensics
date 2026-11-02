@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import hashlib
 import mailparser
 import extract_msg
@@ -13,7 +14,7 @@ class ApexParser:
         self.yara_scanner = ApexYaraScanner()
 
     def parse(self):
-        """Unified parser handling .eml and .msg files entirely via in-memory byte streams (zero-disk leakage)."""
+        """Unified parser handling .eml and .msg files with deep forensic extraction (zero-disk leakage)."""
         raw_bytes, file_hashes = self._load_into_memory()
         
         if self.ext == '.msg':
@@ -23,8 +24,13 @@ class ApexParser:
             
         data['hashes'] = file_hashes
         
+        # Routing hop tracing
         tracer = ApexHopTracer(data.get('headers'))
         data['routing_hops'] = tracer.trace_hops()
+        
+        # Advanced Forensic Enhancements
+        data['urls'] = self._extract_and_defang_urls(data.get('body', ''))
+        data['authentication'] = self._check_email_authentication(data.get('headers', ''))
         
         return data
 
@@ -32,7 +38,6 @@ class ApexParser:
         return self.parse()
 
     def _load_into_memory(self):
-        """Reads file into memory as bytes and computes cryptographic chain-of-custody hashes simultaneously."""
         sha256_hash = hashlib.sha256()
         md5_hash = hashlib.md5()
         
@@ -54,6 +59,56 @@ class ApexParser:
                 "md5": "ERROR_COMPUTING_HASH"
             }
 
+    def _extract_and_defang_urls(self, body_text):
+        """Extracts URLs and defangs them (e.g., hxxp://) to safely display in forensic reports."""
+        if not body_text:
+            return []
+        
+        url_pattern = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
+        found_urls = url_pattern.findall(str(body_text))
+        
+        defanged_list = []
+        for url in set(found_urls):
+            defanged = url.replace('http://', 'hxxp://').replace('https://', 'hxxps://').replace('.', '[.]')
+            defanged_list.append({
+                "original": url,
+                "defanged": defanged
+            })
+        return defanged_list
+
+    def _check_email_authentication(self, headers):
+        """Analyzes transport headers for SPF, DKIM, and DMARC authentication results."""
+        auth_results = {
+            "spf": "NOT_FOUND",
+            "dkim": "NOT_FOUND",
+            "dmarc": "NOT_FOUND"
+        }
+        
+        header_str = ""
+        if isinstance(headers, list):
+            header_str = "\n".join([f"{k}: {v}" for k, v in headers])
+        else:
+            header_str = str(headers)
+            
+        header_lower = header_str.lower()
+        
+        if "spf=pass" in header_lower or "received-spf: pass" in header_lower:
+            auth_results["spf"] = "PASS"
+        elif "spf=fail" in header_lower or "received-spf: fail" in header_lower:
+            auth_results["spf"] = "FAIL"
+            
+        if "dkim=pass" in header_lower:
+            auth_results["dkim"] = "PASS"
+        elif "dkim=fail" in header_lower:
+            auth_results["dkim"] = "FAIL"
+            
+        if "dmarc=pass" in header_lower:
+            auth_results["dmarc"] = "PASS"
+        elif "dmarc=fail" in header_lower or "dmarc=permerror" in header_lower:
+            auth_results["dmarc"] = "FAIL"
+            
+        return auth_results
+
     def _parse_eml_stream(self, raw_bytes):
         mail = mailparser.parse_from_bytes(raw_bytes)
         
@@ -66,10 +121,22 @@ class ApexParser:
                     sender = str(mail.from_[0])
             else:
                 sender = str(mail.from_)
+        
+        if not sender and mail.mail_header:
+            for k, v in mail.mail_header:
+                if k.lower() == 'from':
+                    sender = v
+                    break
 
         to_field = mail.to if mail.to else ""
         if isinstance(to_field, list):
             to_field = ", ".join([str(t[1] if isinstance(t, (list, tuple)) and len(t) > 1 else t) for t in to_field])
+        
+        if not to_field and mail.mail_header:
+            for k, v in mail.mail_header:
+                if k.lower() == 'to':
+                    to_field = v
+                    break
 
         attachments = []
         if mail.attachments:
@@ -93,11 +160,11 @@ class ApexParser:
                 })
 
         return {
-            "subject": mail.subject,
-            "from": sender,
-            "sender": sender,
-            "to": to_field,
-            "recipient": to_field,
+            "subject": mail.subject or "No Subject",
+            "from": sender or "Unknown Sender",
+            "sender": sender or "Unknown Sender",
+            "to": to_field or "Unknown Recipient",
+            "recipient": to_field or "Unknown Recipient",
             "date": mail.date,
             "body": mail.body,
             "headers": mail.mail_header,
@@ -107,9 +174,45 @@ class ApexParser:
     def _parse_msg_stream(self, raw_bytes):
         msg = extract_msg.Message(io.BytesIO(raw_bytes))
         
-        sender = getattr(msg, 'sender', '')
-        to_field = getattr(msg, 'to', '')
+        sender = ""
+        for attr in ['sender', 'author', 'sentRepresentingName', 'origSenderName', 'displayFrom']:
+            val = getattr(msg, attr, None)
+            if val and str(val).strip():
+                sender = str(val).strip()
+                break
         
+        header_text = ""
+        try:
+            if hasattr(msg, 'header') and msg.header:
+                header_text = str(msg.header)
+        except Exception:
+            pass
+
+        if not sender and header_text:
+            for line in header_text.splitlines():
+                if line.lower().startswith('from:'):
+                    sender = line.split(':', 1)[1].strip()
+                    break
+
+        if not sender:
+            sender = "Unknown Sender"
+
+        to_field = ""
+        for attr in ['to', 'displayTo', 'sentRepresentingEmailAddress', 'recipients']:
+            val = getattr(msg, attr, None)
+            if val and str(val).strip():
+                to_field = str(val).strip()
+                break
+
+        if not to_field and header_text:
+            for line in header_text.splitlines():
+                if line.lower().startswith('to:'):
+                    to_field = line.split(':', 1)[1].strip()
+                    break
+
+        if not to_field:
+            to_field = "Unknown Recipient"
+
         attachments = []
         if msg.attachments:
             for att in msg.attachments:
@@ -130,14 +233,14 @@ class ApexParser:
                 })
                 
         parsed_data = {
-            "subject": msg.subject,
+            "subject": msg.subject or "No Subject",
             "from": sender,
             "sender": sender,
             "to": to_field,
             "recipient": to_field,
             "date": msg.date,
             "body": msg.body,
-            "headers": str(msg.header) if msg.header else "",
+            "headers": header_text,
             "attachments": attachments
         }
         msg.close()

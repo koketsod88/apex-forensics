@@ -1,69 +1,65 @@
-#!/usr/bin/env python3
 import argparse
-import os
 import sys
-from datetime import datetime
-from core.banner import print_banner
+import os
 from core.parser import ApexParser
-from core.scorer import ApexScorer
-from reports.pdf_generator import ApexReportGenerator
+from core.scorer import ApexRiskScorer
+from reports.pdf_generator import ApexPDFGenerator
+
+# ANSI Color Codes for Kali Terminal
+RED = "\033[91m"
+CYAN = "\033[96m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+def print_banner():
+    banner = f"""{RED}{BOLD}
+    █████╗ ██████╗ ███████╗██╗  ██╗
+   ██╔══██╗██╔══██╗██╔════╝╚██╗██╔╝
+   ███████║██████╔╝█████╗   ╚███╔╝ 
+   ██╔══██║██╔═══╝ ██╔══╝   ██╔██╗ 
+   ██║  ██║██║     ███████╗██╔╝ ██╗
+   ╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝{RESET}
+   {BOLD}APEX - Automated Phishing Executive Examiner{RESET}
+   {YELLOW}Enterprise Email Forensics & SOC Triage Engine{RESET}
+   --------------------------------------------------
+    """
+    print(banner)
 
 def main():
     print_banner()
-
-    parser = argparse.ArgumentParser(
-        description="APEX - Automated Phishing Executive Examiner",
-        usage="python3 apex.py -f <path_to_email> [options]"
-    )
     
-    parser.add_argument(
-        "-f", "--file", 
-        required=True, 
-        help="Path to the target email file (.eml or .msg)"
-    )
+    parser = argparse.ArgumentParser(description="APEX: Automated Phishing Executive Examiner")
+    parser.add_argument("-f", "--file", required=True, help="Path to the email sample file (.eml or .msg)")
+    parser.add_argument("-o", "--output", default="reports_output", help="Output directory for PDF reports")
     
-    parser.add_argument(
-        "-o", "--output", 
-        default="./reports_output", 
-        help="Directory to save the generated PDF report (default: ./reports_output)"
-    )
-
     args = parser.parse_args()
-
-    if not os.path.exists(args.file):
-        print(f"\033[91m[!] Error: Target file '{args.file}' not found.\033[0m")
-        sys.exit(1)
-
-    print(f"\033[94m[*] Initializing forensic analysis on:\033[0m {args.file}")
     
-    # 1. Parse Email
-    apex_parser = ApexParser(args.file)
-    results = apex_parser.parse_email()
-
-    if not results:
-        print(f"\033[91m[!] Analysis failed during parsing stage.\033[0m")
+    if not os.path.exists(args.file):
+        print(f"{RED}[!] Error: File not found -> {args.file}{RESET}")
         sys.exit(1)
-
-    # 2. Calculate Score & Severity
-    scorer = ApexScorer(results)
-    score = scorer.calculate_score()
-    severity, description = scorer.get_severity_tier()
-
-    print(f"\033[92m[+] Forensic Triage Complete:\033[0m")
-    print(f"    - Subject       : {results['subject']}")
-    print(f"    - Composite Risk: {score} / 100")
-    print(f"    - Severity Tier : {severity}")
-
-    # 3. Generate PDF Report
-    os.makedirs(args.output, exist_ok=True)
-    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_filename = os.path.join(args.output, f"APEX_Report_{timestamp_str}.pdf")
-
-    report_gen = ApexReportGenerator(pdf_filename, results, score, severity)
-    report_gen.build_pdf()
-
-    print(f"\033[92m[+] Executive PDF report generated successfully:\033[0m {pdf_filename}")
-    print(f"\033[90m[*] Module execution completed.\033[0m\n")
+    
+    print(f"{CYAN}[*]{RESET} Ingesting and parsing email evidence: {BOLD}{args.file}{RESET}")
+    email_parser = ApexParser(args.file)
+    parsed_data = email_parser.parse()
+    
+    print(f"{CYAN}[*]{RESET} Computing phishing risk score and threat tier...")
+    scorer = ApexRiskScorer(parsed_data)
+    risk_data = scorer.evaluate()
+    parsed_data.update(risk_data)
+    
+    print(f"{CYAN}[*]{RESET} Generating executive PDF forensic report...")
+    pdf_gen = ApexPDFGenerator(parsed_data, output_dir=args.output)
+    report_path = pdf_gen.build_pdf()
+    
+    score = parsed_data.get('risk_score', 0)
+    severity = parsed_data.get('severity', 'LOW')
+    color = GREEN if score < 40 else YELLOW if score < 75 else RED
+    
+    print(f"\n{color}{BOLD}[+] INVESTIGATION COMPLETE!{RESET}")
+    print(f"    - Risk Score: {color}{BOLD}{score}/100 ({severity}){RESET}")
+    print(f"    - Report Saved: {BOLD}{report_path}{RESET}\n")
 
 if __name__ == "__main__":
     main()
