@@ -27,7 +27,7 @@ APEX is an open-source, CLI-driven forensic engine built to streamline phishing 
 
 1. **Clone the repository**:
    ```bash
-   git clone [https://github.com/akalashiankov/apex-forensics.git](https://github.com/akalashiankov/apex-forensics.git)
+   git clone [https://github.com/koketsod88/apex-forensics.git](https://github.com/koketsod88/apex-forensics.git)
    cd apex-forensics
    ```
 
