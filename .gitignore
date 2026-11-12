@@ -1,6 +1,8 @@
-__pycache__/
-core/__pycache__/
-reports/__pycache__/
+reports_output/
+*.pdf
+*.eml
+*.msg
 venv/
-reports_output/*.pdf
-.DS_Store
+__pycache__/
+*.pyc
+.env
